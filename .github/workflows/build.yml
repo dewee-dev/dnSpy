@@ -1,11 +1,8 @@
 name: GitHub CI
-
 on:
   push:
     branches:
       - master
-    tags:
-      - "v*"
   pull_request:
     branches:
       - master
@@ -19,8 +16,8 @@ jobs:
     name: Build
     runs-on: windows-latest
     defaults:
-      run:
-        shell: pwsh
+        run:
+          shell: pwsh
     strategy:
       matrix:
         platform: [netframework, net-x86, net-x64]
@@ -40,54 +37,27 @@ jobs:
         with:
           submodules: true
 
-      # 安装 .NET Framework SDK
-      - name: 安装 .NET Framework SDK
-        run: |
-          Invoke-WebRequest -Uri "https://download.visualstudio.microsoft.com/download/pr/7a8195c5-0d51-4064-9738-d2dbbb89c855/37acc5c168eeff44cb3e2f697a2e3bc5/ndp48-devpack-enu.exe" -OutFile "ndp48-devpack-enu.exe"
-          Start-Process -FilePath "ndp48-devpack-enu.exe" -ArgumentList "/quiet", "/norestart" -Wait
-
-      # 安装多个版本的 .NET SDK
       - uses: actions/setup-dotnet@v4.1.0
         with:
-          dotnet-version: |
-            6.0.x
-            7.0.x
-            8.0.x
+          dotnet-version: 8.0.x
           dotnet-quality: ga
-
-      # 安装 Visual Studio 构建工具
-      - name: 安装 Visual Studio 构建工具
-        run: |
-          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
-          Start-Process -FilePath "vs_buildtools.exe" -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", `
-            "--installPath", "C:\BuildTools", `
-            "--add", "Microsoft.VisualStudio.Workload.MSBuildTools", `
-            "--add", "Microsoft.VisualStudio.Workload.NetCoreBuildTools", `
-            "--add", "Microsoft.Net.Component.4.8.SDK", `
-            "--add", "Microsoft.Net.Component.4.8.TargetingPack", `
-            "--add", "Microsoft.VisualStudio.Component.Windows10SDK.19041", `
-            "--add", "Microsoft.VisualStudio.Component.Windows11SDK.22621" -Wait
 
       - uses: microsoft/setup-msbuild@v2.0.0
 
-      # 还原 NuGet 包
-      - name: 还原 NuGet 包
-        run: |
-          dotnet restore dnSpy.sln
-          nuget restore dnSpy.sln
+      - name: Build dnSpy (${{matrix.platform}})
+        run: .\build.ps1 ${{matrix.platform}}
 
-      - name: 创建输出目录
-        run: |
-          New-Item -ItemType Directory -Force -Path "C:\builtfiles"
+      - name: Create output directory
+        run: New-Item -ItemType Directory -Path C:\builtfiles\dnSpy-${{matrix.platform}} -Force > $null
+        continue-on-error: true
 
-      - name: Build ${{matrix.platform}}
-        run: |
-          if ('${{matrix.platform}}' -eq 'netframework') {
-            msbuild dnSpy.sln /m /t:Restore /p:Configuration=Release /p:Platform="Any CPU"
-            msbuild dnSpy.sln /m /p:Configuration=Release /p:Platform="Any CPU" /p:OutDir="C:\builtfiles\dnSpy-${{matrix.platform}}\" /p:RestorePackagesConfig=true
-          } else {
-            Remove-Item -Path "C:\builtfiles\dnSpy-${{matrix.platform}}" -Recurse -Force -ErrorAction SilentlyContinue
-            New-Item -ItemType Directory -Force -Path "C:\builtfiles\dnSpy-${{matrix.platform}}"
-            
-            $runtimeId = if ('${{matrix.platform}}' -eq 'net-x86') { 'win-x86' } else { 'win-x64' }
-            dotnet publish dnSpy.sln -c Release -f net8.0-windows --
+      - name:  Copy release files for upload
+        run: Copy-Item -Path dnSpy\dnSpy\bin\Release\${{matrix.build-dir}}\* -Destination C:\builtfiles\dnSpy-${{matrix.platform}} -Recurse
+
+      - uses: actions/upload-artifact@v4.4.3
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+        with:
+          name: dnSpy-${{matrix.package-name}}
+          path: C:\builtfiles\dnSpy-${{matrix.platform}}
+          if-no-files-found: error
+          compression-level: 9
