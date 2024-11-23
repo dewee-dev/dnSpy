@@ -42,10 +42,18 @@ jobs:
 
       - uses: actions/setup-dotnet@v4.1.0
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            6.0.x
+            7.0.x
+            8.0.x
           dotnet-quality: ga
 
       - uses: microsoft/setup-msbuild@v2.0.0
+
+      # 添加 NuGet 还原步骤
+      - name: 还原 NuGet 包
+        run: |
+          nuget restore dnSpy.sln
 
       - name: 创建输出目录
         run: |
@@ -54,7 +62,7 @@ jobs:
       - name: Build ${{matrix.platform}}
         run: |
           if ('${{matrix.platform}}' -eq 'netframework') {
-            msbuild dnSpy.sln /m /r /p:Configuration=Release /p:Platform="Any CPU" /p:OutDir="C:\builtfiles\dnSpy-${{matrix.platform}}\"
+            msbuild dnSpy.sln /m /r /p:Configuration=Release /p:Platform="Any CPU" /p:OutDir="C:\builtfiles\dnSpy-${{matrix.platform}}\" /p:RestorePackagesConfig=true
           } else {
             dotnet publish dnSpy.sln -c Release -f net8.0-windows --self-contained true -r win-${{matrix.platform == 'net-x86' && 'x86' || 'x64'}} -o "C:\builtfiles\dnSpy-${{matrix.platform}}"
           }
