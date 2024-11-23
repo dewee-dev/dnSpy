@@ -40,6 +40,13 @@ jobs:
         with:
           submodules: true
 
+      # 安装 .NET Framework SDK
+      - name: 安装 .NET Framework SDK
+        run: |
+          Invoke-WebRequest -Uri "https://download.visualstudio.microsoft.com/download/pr/7a8195c5-0d51-4064-9738-d2dbbb89c855/37acc5c168eeff44cb3e2f697a2e3bc5/ndp48-devpack-enu.exe" -OutFile "ndp48-devpack-enu.exe"
+          Start-Process -FilePath "ndp48-devpack-enu.exe" -ArgumentList "/quiet", "/norestart" -Wait
+
+      # 安装多个版本的 .NET SDK
       - uses: actions/setup-dotnet@v4.1.0
         with:
           dotnet-version: |
@@ -48,11 +55,25 @@ jobs:
             8.0.x
           dotnet-quality: ga
 
+      # 安装 Visual Studio 构建工具
+      - name: 安装 Visual Studio 构建工具
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile "vs_buildtools.exe"
+          Start-Process -FilePath "vs_buildtools.exe" -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", `
+            "--installPath", "C:\BuildTools", `
+            "--add", "Microsoft.VisualStudio.Workload.MSBuildTools", `
+            "--add", "Microsoft.VisualStudio.Workload.NetCoreBuildTools", `
+            "--add", "Microsoft.Net.Component.4.8.SDK", `
+            "--add", "Microsoft.Net.Component.4.8.TargetingPack", `
+            "--add", "Microsoft.VisualStudio.Component.Windows10SDK.19041", `
+            "--add", "Microsoft.VisualStudio.Component.Windows11SDK.22621" -Wait
+
       - uses: microsoft/setup-msbuild@v2.0.0
 
-      # 添加 NuGet 还原步骤
+      # 还原 NuGet 包
       - name: 还原 NuGet 包
         run: |
+          dotnet restore dnSpy.sln
           nuget restore dnSpy.sln
 
       - name: 创建输出目录
@@ -62,49 +83,11 @@ jobs:
       - name: Build ${{matrix.platform}}
         run: |
           if ('${{matrix.platform}}' -eq 'netframework') {
-            msbuild dnSpy.sln /m /r /p:Configuration=Release /p:Platform="Any CPU" /p:OutDir="C:\builtfiles\dnSpy-${{matrix.platform}}\" /p:RestorePackagesConfig=true
+            msbuild dnSpy.sln /m /t:Restore /p:Configuration=Release /p:Platform="Any CPU"
+            msbuild dnSpy.sln /m /p:Configuration=Release /p:Platform="Any CPU" /p:OutDir="C:\builtfiles\dnSpy-${{matrix.platform}}\" /p:RestorePackagesConfig=true
           } else {
-            dotnet publish dnSpy.sln -c Release -f net8.0-windows --self-contained true -r win-${{matrix.platform == 'net-x86' && 'x86' || 'x64'}} -o "C:\builtfiles\dnSpy-${{matrix.platform}}"
-          }
-
-      - name: 验证构建输出
-        run: |
-          if (!(Test-Path "C:\builtfiles\dnSpy-${{matrix.platform}}")) {
-            Write-Error "构建输出目录不存在"
-            exit 1
-          }
-          Get-ChildItem "C:\builtfiles\dnSpy-${{matrix.platform}}" -Recurse
-
-      - uses: actions/upload-artifact@v4.4.3
-        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
-        with:
-          name: dnSpy-${{matrix.package-name}}
-          path: C:\builtfiles\dnSpy-${{matrix.platform}}
-          if-no-files-found: error
-          compression-level: 9
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - name: 下载所有构建产物
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          
-      - name: 创建ZIP文件
-        run: |
-          cd artifacts
-          for d in */; do
-            zip -r "../${d%/}.zip" "$d"
-          done
-          
-      - name: 创建Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            *.zip
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            Remove-Item -Path "C:\builtfiles\dnSpy-${{matrix.platform}}" -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path "C:\builtfiles\dnSpy-${{matrix.platform}}"
+            
+            $runtimeId = if ('${{matrix.platform}}' -eq 'net-x86') { 'win-x86' } else { 'win-x64' }
+            dotnet publish dnSpy.sln -c Release -f net8.0-windows --
