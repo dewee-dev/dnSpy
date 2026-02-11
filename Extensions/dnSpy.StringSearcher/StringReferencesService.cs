@@ -21,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -30,10 +31,13 @@ using dnlib.DotNet;
 using dnlib.DotNet.Emit;
 using dnSpy.Contracts.Controls;
 using dnSpy.Contracts.Decompiler;
+using dnSpy.Contracts.Documents;
 using dnSpy.Contracts.Documents.Tabs;
+using dnSpy.Contracts.Documents.TreeView;
 using dnSpy.Contracts.Images;
 using dnSpy.Contracts.Menus;
 using dnSpy.Contracts.MVVM;
+using dnSpy.Contracts.Settings.AppearanceCategory;
 using dnSpy.Contracts.Text.Classification;
 using Microsoft.VisualStudio.Text.Classification;
 
@@ -48,7 +52,7 @@ namespace dnSpy.StringSearcher {
 	}
 
 	[Export(typeof(IStringReferencesService))]
-	public class StringReferencesService : IStringReferencesService {
+	sealed class StringReferencesService : IStringReferencesService {
 		private static readonly List<string> CachedFixedArgumentNames = [];
 
 		private readonly IDecompilerService decompilerService;
@@ -60,6 +64,7 @@ namespace dnSpy.StringSearcher {
 		private readonly StringsControlVM vm;
 		private readonly Dispatcher dispatcher;
 		private ModuleDef[] selectedModules = [];
+		private CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
 
 		public StringsControl UIObject { get; }
 
@@ -79,7 +84,8 @@ namespace dnSpy.StringSearcher {
 			IDocumentTabService documentTabService,
 			IMenuService menuService,
 			IWpfCommandService wpfCommandService,
-			IDotNetImageService dotNetImageService) {
+			IDotNetImageService dotNetImageService,
+			IStringReferencesSettings settings) {
 
 			this.decompilerService = decompilerService;
 			this.textElementProvider = textElementProvider;
@@ -87,7 +93,7 @@ namespace dnSpy.StringSearcher {
 			this.documentTabService = documentTabService;
 			this.dotNetImageService = dotNetImageService;
 			UIObject = new StringsControl {
-				DataContext = vm = new StringsControlVM(this)
+				DataContext = vm = new StringsControlVM(this, settings)
 			};
 
 			dispatcher = Dispatcher.CurrentDispatcher;
@@ -118,6 +124,8 @@ namespace dnSpy.StringSearcher {
 
 			decompilerService.DecompilerChanged += (_, _) => Refresh();
 			documentTabService.DocumentModified += (_, _) => Refresh();
+
+			documentTabService.DocumentTreeView.DocumentService.CollectionChanged += DocumentService_CollectionChanged;
 		}
 
 		private void FollowSelectedReference(bool newTab) {
@@ -137,16 +145,19 @@ namespace dnSpy.StringSearcher {
 			var context = new StringReferenceContext(
 				decompilerService.Decompiler,
 				textElementProvider,
-				classificationFormatMapService.GetClassificationFormatMap("UIMisc"), // TODO: replace string with AppearanceCategoryConstants.UIMisc
+				classificationFormatMapService.GetClassificationFormatMap(AppearanceCategoryConstants.UIMisc),
 				dotNetImageService
 			);
+
+			cancellationTokenSource.Cancel();
+			cancellationTokenSource = new CancellationTokenSource();
 
 			vm.StringLiterals.Clear();
 
 			Task.Factory.StartNew(() => {
 				AnalyzeMetadataRoots(context);
 				AnalyzeModules(context);
-			});
+			}, cancellationTokenSource.Token);
 		}
 
 		private void AnalyzeMetadataRoots(StringReferenceContext context) {
@@ -177,7 +188,10 @@ namespace dnSpy.StringSearcher {
 		}
 
 		private void AnalyzeModules(StringReferenceContext context) {
-			Parallel.ForEach(selectedModules.SelectMany(x => x.GetTypes()), type => {
+			var parallelOptions = new ParallelOptions {
+				CancellationToken = cancellationTokenSource.Token,
+			};
+			Parallel.ForEach(selectedModules.SelectMany(x => x.GetTypes()), parallelOptions, type => {
 				var typeContext = new ObjectContext {
 					Context = context,
 					Module = type.Module,
@@ -315,6 +329,16 @@ namespace dnSpy.StringSearcher {
 			}
 		}
 
+		public void EnsureSelectionNonEmpty() {
+			if (selectedModules.Length != 0)
+				return;
+
+			selectedModules = documentTabService.DocumentTreeView.TreeView.SelectedItems
+				.OfType<DocumentTreeNodeData>()
+				.SelectMany(n => n.GetModule()?.Assembly.Modules ?? [])
+				.Distinct().ToArray();
+		}
+
 		public void Refresh() => AnalyzeSelectedModules();
 
 		public void FollowReference(StringReference reference, bool newTab) {
@@ -340,6 +364,27 @@ namespace dnSpy.StringSearcher {
 			}
 
 			return false;
+		}
+
+		void DocumentService_CollectionChanged(object? sender, NotifyDocumentCollectionChangedEventArgs e) {
+			switch (e.Type) {
+			case NotifyDocumentCollectionType.Clear:
+				vm.StringLiterals.Clear();
+				break;
+
+			case NotifyDocumentCollectionType.Remove:
+				if (selectedModules.Length == 0)
+					break;
+				var removedModules = new HashSet<ModuleDef>(e.Documents.SelectMany(d =>
+					d.AssemblyDef is null ? [d.ModuleDef] : d.AssemblyDef.Modules));
+				var newModules = selectedModules.Where(m => !removedModules.Contains(m)).ToArray();
+				if (newModules.Length != selectedModules.Length) {
+					selectedModules = newModules;
+					AnalyzeSelectedModules();
+				}
+
+				break;
+			}
 		}
 
 		private sealed class GuidObjectsProvider : IGuidObjectsProvider {
