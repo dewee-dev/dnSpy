@@ -56,11 +56,11 @@
     <NewtonsoftJsonVersion>13.0.4</NewtonsoftJsonVersion>
     <OokiiDialogsWpfVersion>5.0.1</OokiiDialogsWpfVersion>
     <RoslynVersion>5.0.0</RoslynVersion>
-    <SCCompositionVersion>10.0.2</SCCompositionVersion>
-    <NuGetVersion>7.0.1</NuGetVersion>
+    <SCCompositionVersion>10.0.3</SCCompositionVersion>
+    <NuGetVersion>7.3.0</NuGetVersion>
     <DbgShimVersion>9.0.661903</DbgShimVersion>
-    <SCImmutableVersion>10.0.2</SCImmutableVersion>
-    <NrbfVersion>10.0.2</NrbfVersion>
+    <SCImmutableVersion>10.0.3</SCImmutableVersion>
+    <NrbfVersion>10.0.3</NrbfVersion>
   </PropertyGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)Build\ConvertToNetstandardReferences\ConvertToNetstandardReferences.tasks" Condition=" '$(IsDotNet)' == 'true' " />
