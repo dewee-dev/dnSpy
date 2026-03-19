@@ -114,6 +114,8 @@ namespace dnSpy.Roslyn.Internal {
 
 		AddReference,
 		NuGet,
-		TargetTypeMatch
+		TargetTypeMatch,
+
+		Copilot
 	}
 }
