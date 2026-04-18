@@ -64,3 +64,9 @@ jobs:
           path: C:\builtfiles\dnSpy-${{matrix.platform}}
           if-no-files-found: error
           compression-level: 9
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release' && github.event.action == 'released'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: C:\builtfiles\dnSpy-${{matrix.platform}}\**
