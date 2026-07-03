@@ -104,6 +104,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          for f in artifacts/*.zip; do
-            gh release create "$VERSION" "$f" --repo "$GITHUB_REPOSITORY" --draft --title "dnSpy $VERSION"
-          done
+          gh release create "$VERSION" artifacts/*.zip --repo "$GITHUB_REPOSITORY" --draft --title "dnSpy $VERSION"
