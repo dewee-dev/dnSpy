@@ -1,4 +1,78 @@
+name: GitHub CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
   release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号，例如 v1.0.0'
+        required: false
+        default: 'v0.0.0-ci'
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    strategy:
+      matrix:
+        platform: [netframework, net, net-x86, net-x64]
+        include:
+          - platform: netframework
+            package-name: netframework
+            build-dir: net48
+          - platform: net
+            package-name: net
+            build-dir: net10.0-windows
+          - platform: net-x86
+            package-name: net-win32
+            build-dir: net10.0-windows\win-x86\publish
+          - platform: net-x64
+            package-name: net-win64
+            build-dir: net10.0-windows\win-x64\publish
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: microsoft/setup-msbuild@v3
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build dnSpy (${{ matrix.platform }})
+        run: .\build.ps1 ${{ matrix.platform }}
+
+      - name: Prepare output directory
+        run: |
+          New-Item -ItemType Directory -Path C:\builtfiles\dnSpy-${{ matrix.package-name }} -Force | Out-Null
+          Copy-Item -Path dnSpy\dnSpy\bin\Release\${{ matrix.build-dir }}\* -Destination C:\builtfiles\dnSpy-${{ matrix.package-name }} -Recurse -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnSpy-${{ matrix.package-name }}
+          path: C:\builtfiles\dnSpy-${{ matrix.package-name }}
+          if-no-files-found: warn
+          retention-days: 1
+
+   release:
     name: Publish Release
     needs: build
     runs-on: ubuntu-latest
