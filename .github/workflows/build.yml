@@ -1,4 +1,5 @@
 name: GitHub CI
+
 on:
   push:
     branches:
@@ -8,16 +9,22 @@ on:
       - master
   release:
     types:
-      - released
+      - published
   workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号，例如 v1.0.0'
+        required: false
+        default: 'v0.0.0-ci'
 
 jobs:
   build:
-    name: Build
+    name: Build (${{ matrix.platform }})
     runs-on: windows-latest
     defaults:
-        run:
-          shell: pwsh
+      run:
+        shell: pwsh
+
     strategy:
       matrix:
         platform: [netframework, net, net-x86, net-x64]
@@ -36,37 +43,64 @@ jobs:
             build-dir: net10.0-windows\win-x64\publish
 
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v4
         with:
           submodules: true
 
-      - uses: actions/setup-dotnet@v5.4.0
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
-          dotnet-quality: ga
 
-      - uses: microsoft/setup-msbuild@v3.0.0
+      - uses: microsoft/setup-msbuild@v3
 
-      - name: Build dnSpy (${{matrix.platform}})
-        run: .\build.ps1 ${{matrix.platform}}
+      - name: Restore
+        run: dotnet restore
 
-      - name: Create output directory
-        run: New-Item -ItemType Directory -Path C:\builtfiles\dnSpy-${{matrix.platform}} -Force > $null
-        continue-on-error: true
+      - name: Build dnSpy (${{ matrix.platform }})
+        run: .\build.ps1 ${{ matrix.platform }}
 
-      - name:  Copy release files for upload
-        run: Copy-Item -Path dnSpy\dnSpy\bin\Release\${{matrix.build-dir}}\* -Destination C:\builtfiles\dnSpy-${{matrix.platform}} -Recurse
+      - name: Prepare output directory
+        run: |
+          New-Item -ItemType Directory -Path C:\builtfiles\dnSpy-${{ matrix.package-name }} -Force | Out-Null
+          Copy-Item -Path dnSpy\dnSpy\bin\Release\${{ matrix.build-dir }}\* -Destination C:\builtfiles\dnSpy-${{ matrix.package-name }} -Recurse -Force
 
-      - uses: actions/upload-artifact@v7.0.1
-        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: dnSpy-${{matrix.package-name}}
-          path: C:\builtfiles\dnSpy-${{matrix.platform}}
-          if-no-files-found: error
-          compression-level: 9
+          name: dnSpy-${{ matrix.package-name }}
+          path: C:\builtfiles\dnSpy-${{ matrix.package-name }}
+          if-no-files-found: warn
+          retention-days: 1
 
-      - name: Upload to GitHub Release
-        if: github.event_name == 'release' && github.event.action == 'released'
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            name=$(basename "$dir")
+            cp -r "$dir"/* release/
+          done
+
+      - name: Upload to GitHub Release (tag release)
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: C:\builtfiles\dnSpy-${{matrix.platform}}\**
+          files: release/*
+
+      - name: Create Release and upload (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          gh release create "$VERSION" release/* --repo "$GITHUB_REPOSITORY" --draft --title "Build $VERSION"
