@@ -83,12 +83,12 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create zip archives
+      - name: Zip each platform
         run: |
           cd artifacts
           for dir in */; do
             name="${dir%/}"
-            zip -r "../${name}.zip" "$name/"
+            zip -r "${name}.zip" "$name/"
           done
           cd ..
 
@@ -96,7 +96,7 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: "*.zip"
+          files: artifacts/*.zip
 
       - name: Create Release and upload (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
@@ -104,6 +104,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          for f in *.zip; do
-            gh release create "$VERSION" "$f" --repo "$GITHUB_REPOSITORY" --draft --title "Build $VERSION"
+          for f in artifacts/*.zip; do
+            gh release create "$VERSION" "$f" --repo "$GITHUB_REPOSITORY" --draft --title "dnSpy $VERSION"
           done
