@@ -1,4 +1,5 @@
 name: GitHub CI
+
 on:
   push:
     branches:
@@ -6,10 +7,21 @@ on:
   pull_request:
     branches:
       - master
-  release:
-    types:
-      - released
   workflow_dispatch:
+    inputs:
+      draft:
+        description: '创建为草稿（不自动发布，便于先检查产物）'
+        type: boolean
+        default: false
+
+# 构建只需要读权限；发布 Job 单独申请写权限
+permissions:
+  contents: read
+
+# 同一分支串行执行，避免两个运行同时抢同一个 tag
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -58,9 +70,75 @@ jobs:
         run: Copy-Item -Path dnSpy\dnSpy\bin\Release\${{matrix.build-dir}}\* -Destination C:\builtfiles\dnSpy-${{matrix.platform}} -Recurse
 
       - uses: actions/upload-artifact@v7.0.2
-        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
         with:
           name: dnSpy-${{matrix.package-name}}
           path: C:\builtfiles\dnSpy-${{matrix.platform}}
           if-no-files-found: error
           compression-level: 9
+
+  # 四个平台都构建完再统一打包发布，避免矩阵里各跑各的抢着建 Release
+  release:
+    name: Publish Release
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          path: artifacts
+
+      # 资产名沿用上游习惯：dnSpy-net-win64.zip / dnSpy-net.zip ...
+      - name: 打包各平台 zip
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for dir in artifacts/*/; do
+            name=$(basename "$dir")
+            (cd "$dir" && zip -qr "$GITHUB_WORKSPACE/dist/${name}.zip" .)
+          done
+          ls -lh dist
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          # 版本号取自 DnSpyCommon.props，格式沿用已有发布：v6.6.0-0704（版本号-MMDD）
+          VER=$(grep -oP '(?<=<DnSpyAssemblyInformationalVersion>)[^<]+' DnSpyCommon.props | head -1)
+          MMDD=$(date -u +%m%d)
+          TAG="${VER}-${MMDD}"
+
+          # 同一天多次构建：tag 已存在就追加序号
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            n=2
+            while gh release view "${TAG}-${n}" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; do
+              n=$((n + 1))
+            done
+            TAG="${TAG}-${n}"
+          fi
+
+          {
+            echo "自动构建产物，基于提交 \`${GITHUB_SHA::7}\`。"
+            echo
+            echo "| 文件 | 大小 |"
+            echo "| --- | --- |"
+            for f in dist/*.zip; do
+              printf '| `%s` | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } > notes.md
+
+          ARGS=(--target "$GITHUB_SHA" --title "dnSpy ${TAG}" --notes-file notes.md)
+          if [ "$DRAFT" = "true" ]; then
+            ARGS+=(--draft)
+          else
+            ARGS+=(--latest)
+          fi
+
+          gh release create "$TAG" "${ARGS[@]}" dist/*.zip
+          echo "::notice title=Release 已创建::https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
